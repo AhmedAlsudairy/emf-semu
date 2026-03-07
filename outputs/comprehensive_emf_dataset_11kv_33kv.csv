@@ -1,0 +1,77 @@
+Source,Region,Cable Type,Distance (m),Magnetic Field (µT)
+"Ibrahim et al., 2017",Oman/Saudi Arabia,11kV Overhead (Horizontal),0.5,22.3
+"Ibrahim et al., 2017",Oman/Saudi Arabia,11kV Overhead (Horizontal),1.0,13.5
+"Ibrahim et al., 2017",Oman/Saudi Arabia,11kV Overhead (Horizontal),2.0,7.8
+"Ibrahim et al., 2017",Oman/Saudi Arabia,11kV Overhead (Horizontal),5.0,2.1
+"Ibrahim et al., 2017",Oman/Saudi Arabia,33kV Overhead (Double Circuit),1.0,68.9
+"Ibrahim et al., 2017",Oman/Saudi Arabia,33kV Overhead (Double Circuit),2.0,38.2
+"Ibrahim et al., 2017",Oman/Saudi Arabia,33kV Overhead (Double Circuit),5.0,8.5
+"Ibrahim et al., 2017",Oman/Saudi Arabia,33kV Overhead (Double Circuit),10.0,2.3
+"Abdel-Rahman, 2019",Egypt/Iraq,11kV Substation Fence,0.0,4.0
+"Abdel-Rahman, 2019",Egypt/Iraq,11kV Substation Fence,30.0,0.3
+"Abdel-Rahman, 2019",Egypt/Iraq,33kV Transmission Line,0.0,77.5
+"Abdel-Rahman, 2019",Egypt/Iraq,33kV Transmission Line,10.0,16.5
+"Abdel-Rahman, 2019",Egypt/Iraq,33kV Transmission Line,50.0,1.25
+"Okunola et al., 2016",Nigeria (West Africa),11kV Overhead (Wood Pole),1.0,11.5
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,0.0,1.87
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,1.0,0.78
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,1.0,0.89
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,2.0,0.67
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,2.0,0.69
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,3.0,0.59
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,3.0,0.62
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,4.0,0.51
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,4.0,0.54
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,5.0,0.42
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,5.0,0.44
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,6.0,0.36
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,6.0,0.39
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,7.0,0.26
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,7.0,0.29
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,8.0,0.21
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,8.0,0.24
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,9.0,0.19
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,9.0,0.23
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,10.0,0.12
+"Hasan, 2013","Tikrit, Iraq",Underground Cable A,10.0,0.14
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,0.0,3.74
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,1.0,1.58
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,1.0,1.69
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,2.0,0.98
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,2.0,0.99
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,3.0,0.64
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,3.0,0.71
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,4.0,0.69
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,4.0,0.75
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,5.0,0.4
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,5.0,0.43
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,6.0,0.35
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,6.0,0.39
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,7.0,0.25
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,7.0,0.29
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,8.0,0.22
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,8.0,0.24
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,9.0,0.19
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,9.0,0.23
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,10.0,0.14
+"Hasan, 2013","Tikrit, Iraq",Underground Cable B,10.0,0.16
+"Hasan, 2013","Tikrit, Iraq",Overhead Line 11kV,30.0,0.007
+"Hasan, 2013","Tikrit, Iraq",Overhead Line 11kV,20.0,0.027
+"Hasan, 2013","Tikrit, Iraq",Overhead Line 11kV,10.0,0.131
+"Hasan, 2013","Tikrit, Iraq",Overhead Line 11kV,0.0,3.94
+"Hasan, 2013","Tikrit, Iraq",Overhead Line 11kV,10.0,0.134
+"Hasan, 2013","Tikrit, Iraq",Overhead Line 11kV,20.0,0.03
+"Hasan, 2013","Tikrit, Iraq",Overhead Line 11kV,30.0,0.008
+UK Utility Typical Values (Estimated),UK/International,11kV Underground (Typical Urban),0.0,10.0
+UK Utility Typical Values (Estimated),UK/International,11kV Underground (Typical Urban),1.0,2.0
+UK Utility Typical Values (Estimated),UK/International,11kV Underground (Typical Urban),5.0,0.2
+UK Utility Typical Values (Estimated),UK/International,11kV Overhead (Wood Pole),0.0,1.5
+UK Utility Typical Values (Estimated),UK/International,11kV Overhead (Wood Pole),10.0,0.1
+UK Utility Typical Values (Estimated),UK/International,33kV Underground (Typical),0.0,20.0
+UK Utility Typical Values (Estimated),UK/International,33kV Underground (Typical),1.0,5.0
+UK Utility Typical Values (Estimated),UK/International,33kV Underground (Typical),5.0,0.5
+UK Utility Typical Values (Estimated),UK/International,33kV Overhead (Typical),0.0,4.0
+UK Utility Typical Values (Estimated),UK/International,33kV Overhead (Typical),10.0,0.3
+UK Utility Typical Values (Estimated),UK/International,132kV Overhead (Typical),0.0,30.0
+UK Utility Typical Values (Estimated),UK/International,132kV Overhead (Typical),25.0,1.0
+UK Utility Typical Values (Estimated),UK/International,132kV Overhead (Typical),50.0,0.1

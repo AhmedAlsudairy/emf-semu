@@ -1,0 +1,985 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>3D EMF Transmission Line — Advanced Environmental Simulator</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{overflow:hidden;background:#0a0a1a;font-family:'Segoe UI',system-ui,sans-serif;color:#e0e0e0}
+#info{position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(10,10,30,0.85);
+  padding:8px 24px;border-radius:8px;font-size:13px;z-index:10;border:1px solid #334;pointer-events:none}
+#info h2{font-size:15px;margin-bottom:2px;color:#7ecfff}
+#readout{position:fixed;bottom:12px;left:50%;transform:translateX(-50%);background:rgba(10,10,30,0.92);
+  padding:10px 20px;border-radius:8px;font-size:12px;z-index:10;border:1px solid #334;
+  display:flex;gap:18px;pointer-events:none;flex-wrap:wrap;max-width:95vw;justify-content:center}
+#readout .val{font-weight:700;font-size:14px}
+#readout .lbl{font-size:10px;opacity:0.7}
+.re{color:#ff6b6b}.rb{color:#6bc5ff}.rc{color:#a8e06c}
+#legend{position:fixed;top:10px;right:10px;background:rgba(10,10,30,0.92);padding:10px 14px;
+  border-radius:8px;font-size:11px;z-index:10;border:1px solid #334;line-height:1.8}
+#legend .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:middle}
+canvas{display:block;position:fixed;top:0;left:0;z-index:1}
+.dg.ac{z-index:20!important}
+#errorBox{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(180,30,30,0.95);
+  color:#fff;padding:20px 30px;border-radius:12px;font-size:16px;z-index:9999;display:none;max-width:80vw;
+  white-space:pre-wrap;font-family:monospace}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/js/three.module.js",
+    "three/addons/": "/js/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="errorBox"></div>
+<div id="info"><h2>⚡ 3D EMF — Environmental Field Simulator</h2>Drag to rotate · Scroll to zoom · Right-drag to pan</div>
+<div id="readout">
+  <div><div class="val re" id="rE">—</div><div class="lbl">E-field (V/m)</div></div>
+  <div><div class="val rb" id="rB">—</div><div class="lbl">B-field (μT)</div></div>
+  <div><div class="val rc" id="rC">—</div><div class="lbl">Corona Ec (kV/cm)</div></div>
+  <div><div class="val" style="color:#f0c040" id="rS">—</div><div class="lbl">Sag (m)</div></div>
+  <div><div class="val" style="color:#ccc" id="rD">—</div><div class="lbl">Probe dist</div></div>
+  <div><div class="val" style="color:#f88" id="rEmod">—</div><div class="lbl">E env factor</div></div>
+  <div><div class="val" style="color:#8bf" id="rBmod">—</div><div class="lbl">B env factor</div></div>
+  <div><div class="val" style="color:#fc4" id="rCmod">—</div><div class="lbl">Corona ratio</div></div>
+</div>
+<div id="legend">
+  <b>Legend</b><br>
+  <span class="dot" style="background:#ff4444"></span>E-field particles<br>
+  <span class="dot" style="background:#4488ff"></span>B-field particles<br>
+  <span class="dot" style="background:#ffcc00"></span>Conductors<br>
+  <span class="dot" style="background:#44ff44"></span>Corona<br>
+  <span class="dot" style="background:#ff8800"></span>Heatmap<br>
+  <span class="dot" style="background:#88ccff"></span>Rain<br>
+  <span class="dot" style="background:#c8a050"></span>Dust / Sand<br>
+  <span class="dot" style="background:#aaa"></span>Fog
+</div>
+
+<script src="/js/dat.gui.min.js"></script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* Global error handler — shows errors visually */
+window.addEventListener('error', e => {
+  const box = document.getElementById('errorBox');
+  if(box){ box.style.display='block'; box.textContent += e.message+'\n'; }
+});
+
+/* ================================================================
+   CONSTANTS
+   ================================================================ */
+const MU0=4e-7*Math.PI, EPS0=8.854187817e-12, SQRT3=Math.sqrt(3), G_ACC=9.81;
+
+/* ================================================================
+   PARAMETERS
+   ================================================================ */
+const P = {
+  voltage_kV:220, current_A:500, frequency_Hz:50, power_factor:0.90,
+  tower_height_m:30, phase_spacing_m:7, span_length_m:350,
+  conductor_r_cm:1.5, conductor_w_kg:1.6,
+  /* environment */
+  temperature_C:35, humidity_pct:40, elevation_m:100, wind_speed_ms:3,
+  rain_intensity:0,        // 0=none, 1=light, 2=moderate, 3=heavy
+  dust_density:0,           // 0=none, 1=light, 2=moderate, 3=sandstorm
+  fog_density:0,            // 0=none, 0.5=light, 1=thick
+  pollution_level:0,        // 0=clean, 1=moderate, 2=heavy industrial
+  soil_resistivity:100,     // Ω·m  (affects ground reflection)
+  /* probe */
+  probe_x:15, probe_y:1,
+  /* visualisation */
+  show_E:true, show_B:true, show_corona:true, show_heatmap:true,
+  show_rain:true, show_dust:true, show_fog:true,
+  E_particle_count:800, B_particle_count:800,
+  flow_speed:1.0, particle_size:1.5,
+  arrow_density:8, arrow_scale:1.0, animate:true,
+};
+
+/* ================================================================
+   RENDERER / SCENE / CAMERA
+   ================================================================ */
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.15;
+document.body.appendChild(renderer.domElement);
+renderer.domElement.style.position='fixed';
+renderer.domElement.style.top='0';
+renderer.domElement.style.left='0';
+renderer.domElement.style.zIndex='1';
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x080818);
+scene.fog=new THREE.FogExp2(0x080818,0.002);
+
+const camera=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,0.5,2000);
+camera.position.set(55,30,70);
+const ctrl=new OrbitControls(camera,renderer.domElement);
+ctrl.enableDamping=true; ctrl.dampingFactor=0.08; ctrl.target.set(0,12,0);
+
+/* Lights */
+const ambLight=new THREE.AmbientLight(0x334466,0.5); scene.add(ambLight);
+const sun=new THREE.DirectionalLight(0xffeedd,1.3);
+sun.position.set(50,70,30); sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=-120; sun.shadow.camera.right=120;
+sun.shadow.camera.top=120; sun.shadow.camera.bottom=-120;
+scene.add(sun);
+const hemiLight=new THREE.HemisphereLight(0x88aacc,0x443322,0.35);
+scene.add(hemiLight);
+
+/* Ground */
+const gnd=new THREE.Mesh(new THREE.PlaneGeometry(500,500),
+  new THREE.MeshStandardMaterial({color:0x1a2a1a,roughness:0.95}));
+gnd.rotation.x=-Math.PI/2; gnd.receiveShadow=true; scene.add(gnd);
+const grid=new THREE.GridHelper(500,50,0x335533,0x222a22);
+grid.position.y=0.05; scene.add(grid);
+
+/* Groups */
+const grpTower=new THREE.Group(); scene.add(grpTower);
+const grpCond=new THREE.Group(); scene.add(grpCond);
+const grpCorona=new THREE.Group(); scene.add(grpCorona);
+const grpHeat=new THREE.Group(); scene.add(grpHeat);
+const grpEField=new THREE.Group(); scene.add(grpEField);
+const grpBField=new THREE.Group(); scene.add(grpBField);
+const grpRain=new THREE.Group(); scene.add(grpRain);
+const grpDust=new THREE.Group(); scene.add(grpDust);
+const grpFog=new THREE.Group(); scene.add(grpFog);
+
+/* Probe */
+const probe=new THREE.Mesh(new THREE.SphereGeometry(0.6,16,16),
+  new THREE.MeshStandardMaterial({color:0xaa44ff,emissive:0x6622aa,emissiveIntensity:0.6,transparent:true,opacity:0.85}));
+scene.add(probe);
+
+/* ================================================================
+   PHYSICS HELPERS
+   ================================================================ */
+function condTemp(Ta,I){return Math.min(Ta+2e-4*I*I,200);}
+function sagMax(span,w,Tc){
+  const Tm=Math.max(32000*(1-1.5e-3*(Tc-20)),500);
+  return Math.min(w*G_ACC*span*span/(8*Tm),span*0.04);
+}
+function coronaEc(h,r_cm,elev,Tc,hum){
+  const Pb=101.325*Math.exp(-elev/8500);
+  const d=3.92*Pb/(273+Tc);
+  const Ec=30*0.85*d*(1+0.3/Math.sqrt(r_cm));
+  return Ec*(1-0.002*(hum-50));
+}
+function phasePos(h,sp,sag){
+  const ey=Math.max(h-sag,6);
+  return [[-sp,ey,0],[0,ey+1.8,0],[sp,ey,0]];
+}
+
+/* ================================================================
+   ★ ENVIRONMENTAL MODIFIERS ON E & B FIELDS ★
+   Real physics-based effects of rain, dust, humidity, temperature,
+   pollution, soil on electric and magnetic fields.
+   ================================================================ */
+function envModifiers(){
+  let eFactor=1.0, bFactor=1.0, coronaMod=1.0;
+
+  /* --- Rain: water droplets create space charge, enhance E-field
+     at ground level up to 2-3× during heavy rain.
+     Wet conductors lower surface gradient factor. --- */
+  const rain=P.rain_intensity;
+  if(rain>0){
+    eFactor *= 1 + 0.4*rain;               // E-field enhanced by rain-induced space charge
+    coronaMod *= 1 - 0.15*rain;            // wet surface → lower corona onset
+    bFactor *= 1 + 0.02*rain;              // tiny induced-current effect
+  }
+
+  /* --- Humidity: higher humidity → more ion mobility → enhanced
+     surface E-field, lower corona onset threshold --- */
+  const humFactor=(P.humidity_pct-40)/100;  // normalized from 40% baseline
+  eFactor *= 1 + 0.15*humFactor;
+  coronaMod *= 1 - 0.12*humFactor;
+
+  /* --- Temperature: hot air → lower density → lower dielectric
+     strength → higher effective E-field, more sag → closer conductors --- */
+  const tempFactor=(P.temperature_C-25)/50;
+  eFactor *= 1 + 0.1*tempFactor;
+  coronaMod *= 1 - 0.08*tempFactor;
+
+  /* --- Dust / Pollution: deposits on insulators reduce clearance,
+     create partial discharge paths, increase effective E-field.
+     Dust particles become charged in field → enhance local E. --- */
+  const dust=P.dust_density;
+  if(dust>0){
+    eFactor *= 1 + 0.25*dust;
+    coronaMod *= 1 - 0.1*dust;
+  }
+  const poll=P.pollution_level;
+  if(poll>0){
+    eFactor *= 1 + 0.2*poll;
+    coronaMod *= 1 - 0.12*poll;
+  }
+
+  /* --- Fog: micro-droplets increase permittivity of air path,
+     reduce corona onset, slightly enhance E-field --- */
+  const fog=P.fog_density;
+  if(fog>0){
+    eFactor *= 1 + 0.15*fog;
+    coronaMod *= 1 - 0.1*fog;
+  }
+
+  /* --- Wind: conductor sway changes geometry (handled in sag),
+     wind also increases convective cooling → affects temp.
+     Strong wind can strip space charge → reduce E enhancement --- */
+  const wind=P.wind_speed_ms;
+  if(wind>10) eFactor *= 1 - 0.03*(wind-10)/20;
+
+  /* --- Soil resistivity: low resistivity → better grounding →
+     stronger image charges → higher E at ground.
+     High resistivity → weaker image → lower ground E --- */
+  const soilRef=100; // reference 100 Ω·m
+  const soilFactor=soilRef/Math.max(P.soil_resistivity,1);
+  eFactor *= 0.85 + 0.15*Math.min(soilFactor,2);
+
+  /* --- Elevation: lower air pressure → lower dielectric strength --- */
+  const elevFactor=P.elevation_m/8500;
+  eFactor *= 1 + 0.08*elevFactor;
+
+  return {eFactor, bFactor, coronaMod};
+}
+
+/* B-field: Biot-Savart with env modifier */
+function bAt(px,py,pp,I,angles){
+  let bx=0,by=0;
+  for(let i=0;i<3;i++){
+    const dx=px-pp[i][0],dy=py-pp[i][1];
+    const r2=dx*dx+dy*dy; if(r2<0.01)continue;
+    const r=Math.sqrt(r2);
+    const Ip=I*Math.cos(angles[i]);
+    const Bm=MU0*Math.abs(Ip)/(2*Math.PI*r);
+    bx+=Bm*(-dy/r); by+=Bm*(dx/r);
+  }
+  const {bFactor}=envModifiers();
+  bx*=bFactor; by*=bFactor;
+  return {x:bx,y:by,mag:Math.sqrt(bx*bx+by*by)};
+}
+
+/* E-field: charge simulation + env modifier */
+function eAt(px,py,pp,V_kV,angles){
+  let ex=0,ey=0;
+  const V=V_kV*1000/SQRT3;
+  const r_m=P.conductor_r_cm/100;
+  for(let i=0;i<3;i++){
+    const cx=pp[i][0],cy=pp[i][1];
+    const Vp=V*Math.cos(angles[i]);
+    const lam=2*Math.PI*EPS0*Vp/Math.log(2*cy/r_m);
+    const dx=px-cx;
+    const dy1=py-cy,dy2=py+cy;
+    const r12=dx*dx+dy1*dy1,r22=dx*dx+dy2*dy2;
+    if(r12<0.01||r22<0.01)continue;
+    const k=lam/(2*Math.PI*EPS0);
+    ex+=k*(dx/r12-dx/r22);
+    ey+=k*(dy1/r12-dy2/r22);
+  }
+  const {eFactor}=envModifiers();
+  ex*=eFactor; ey*=eFactor;
+  return {x:ex,y:ey,mag:Math.sqrt(ex*ex+ey*ey)};
+}
+
+/* ================================================================
+   CLEAR
+   ================================================================ */
+function clearGroup(g){
+  while(g.children.length){
+    const c=g.children[0]; g.remove(c);
+    if(c.geometry) c.geometry.dispose();
+    if(c.material){
+      if(Array.isArray(c.material)) c.material.forEach(m=>{if(m.map)m.map.dispose();m.dispose();});
+      else{if(c.material.map)c.material.map.dispose();c.material.dispose();}
+    }
+    if(c.children) c.traverse(ch=>{
+      if(ch.geometry)ch.geometry.dispose();
+      if(ch.material){if(Array.isArray(ch.material))ch.material.forEach(m=>m.dispose());else ch.material.dispose();}
+    });
+  }
+}
+
+/* ================================================================
+   TOWERS
+   ================================================================ */
+function buildTowers(){
+  clearGroup(grpTower);
+  const h=P.tower_height_m,sp=P.phase_spacing_m,span=P.span_length_m;
+  const matP=new THREE.MeshStandardMaterial({color:0x778899,metalness:0.7,roughness:0.35});
+  const matA=new THREE.MeshStandardMaterial({color:0x667788,metalness:0.5,roughness:0.4});
+  const matI=new THREE.MeshStandardMaterial({color:0x44aa88,roughness:0.3,metalness:0.2});
+  const matB=new THREE.MeshStandardMaterial({color:0x555555,roughness:0.8});
+  for(const tz of[-span/2,span/2]){
+    const pole=new THREE.Mesh(new THREE.CylinderGeometry(0.25,0.55,h,8),matP);
+    pole.position.set(0,h/2,tz); pole.castShadow=true; grpTower.add(pole);
+    for(const sx of[-1,1]){
+      const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.1,h*1.05,6),matP);
+      leg.position.set(sx*1.2,h/2,tz); leg.rotation.z=sx*0.08; grpTower.add(leg);
+    }
+    const arm1=new THREE.Mesh(new THREE.BoxGeometry(sp*2.6,0.25,0.25),matA);
+    arm1.position.set(0,h-0.5,tz); grpTower.add(arm1);
+    const arm2=new THREE.Mesh(new THREE.BoxGeometry(sp*2.2,0.2,0.2),matA);
+    arm2.position.set(0,h-2,tz); grpTower.add(arm2);
+    for(const dx of[-sp,0,sp]){
+      const ins=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.18,2.2,8),matI);
+      ins.position.set(dx,h-1.6,tz); grpTower.add(ins);
+      for(let d=0;d<3;d++){
+        const disc=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,0.08,8),matI);
+        disc.position.set(dx,h-0.8-d*0.5,tz); grpTower.add(disc);
+      }
+    }
+    const base=new THREE.Mesh(new THREE.BoxGeometry(4,0.4,4),matB);
+    base.position.set(0,0.2,tz); base.receiveShadow=true; grpTower.add(base);
+  }
+}
+
+/* ================================================================
+   CONDUCTORS
+   ================================================================ */
+function buildConductors(){
+  clearGroup(grpCond);
+  const h=P.tower_height_m,sp=P.phase_spacing_m,span=P.span_length_m;
+  const Tc=condTemp(P.temperature_C,P.current_A);
+  const sm=sagMax(span,P.conductor_w_kg,Tc);
+  /* Wind sway: lateral displacement proportional to wind */
+  const sway=Math.min(P.wind_speed_ms*0.08,3);
+  const colors=[0xffcc00,0xff9900,0xffee44];
+  const offsets=[-sp,0,sp], hBonus=[0,1.8,0];
+  for(let p=0;p<3;p++){
+    const pts=[];
+    for(let i=0;i<=64;i++){
+      const t=i/64, z=-span/2+t*span, xn=(t-0.5)*2;
+      const sagY=sm*(1-xn*xn);
+      const windX=sway*Math.sin(t*Math.PI); // max sway at mid-span
+      pts.push(new THREE.Vector3(offsets[p]+windX, Math.max(h-sagY+hBonus[p],4), z));
+    }
+    const curve=new THREE.CatmullRomCurve3(pts);
+    const r=Math.max(P.conductor_r_cm/100*4,0.06);
+    const mesh=new THREE.Mesh(
+      new THREE.TubeGeometry(curve,64,r,8,false),
+      new THREE.MeshStandardMaterial({color:colors[p],emissive:colors[p],emissiveIntensity:0.35,metalness:0.85,roughness:0.15})
+    );
+    mesh.castShadow=true; grpCond.add(mesh);
+  }
+  /* Ground wire */
+  const gwPts=[];
+  for(let i=0;i<=32;i++){
+    const t=i/32,z=-span/2+t*span,xn=(t-0.5)*2;
+    gwPts.push(new THREE.Vector3(sway*0.5*Math.sin(t*Math.PI),h+2-sm*0.3*(1-xn*xn),z));
+  }
+  grpCond.add(new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(gwPts),32,0.03,6,false),
+    new THREE.MeshStandardMaterial({color:0x888888,metalness:0.6,roughness:0.4})
+  ));
+}
+
+/* ================================================================
+   ★ FIELD PARTICLE SYSTEM — FIXED & VISIBLE ★
+   Using ShaderMaterial for per-particle size + glow sprite.
+   ================================================================ */
+
+/* Create a glow sprite texture procedurally */
+function makeGlowTexture(){
+  const sz=64, c=document.createElement('canvas');
+  c.width=sz; c.height=sz;
+  const ctx=c.getContext('2d');
+  const g=ctx.createRadialGradient(sz/2,sz/2,0,sz/2,sz/2,sz/2);
+  g.addColorStop(0,'rgba(255,255,255,1)');
+  g.addColorStop(0.15,'rgba(255,255,255,0.8)');
+  g.addColorStop(0.4,'rgba(255,200,100,0.3)');
+  g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle=g;
+  ctx.fillRect(0,0,sz,sz);
+  const tex=new THREE.CanvasTexture(c);
+  tex.needsUpdate=true;
+  return tex;
+}
+const glowTex=makeGlowTexture();
+
+/* Custom ShaderMaterial that reads per-vertex size + color */
+function makeFieldPointsMat(baseSize){
+  return new THREE.ShaderMaterial({
+    uniforms:{
+      uTex:{value:glowTex},
+      uBase:{value:baseSize},
+    },
+    vertexShader:`
+      attribute float size;
+      varying vec3 vColor;
+      uniform float uBase;
+      void main(){
+        vColor=color;
+        vec4 mv=modelViewMatrix*vec4(position,1.0);
+        gl_PointSize=uBase*size*(300.0/(-mv.z));
+        gl_Position=projectionMatrix*mv;
+      }
+    `,
+    fragmentShader:`
+      uniform sampler2D uTex;
+      varying vec3 vColor;
+      void main(){
+        vec4 t=texture2D(uTex,gl_PointCoord);
+        if(t.a<0.02) discard;
+        gl_FragColor=vec4(vColor*t.rgb*2.0, t.a*0.9);
+      }
+    `,
+    blending:THREE.AdditiveBlending,
+    depthWrite:false,
+    transparent:true,
+    vertexColors:true,
+  });
+}
+
+class FieldParticles{
+  constructor(maxN,type){
+    this.type=type; this.maxN=maxN;
+    this.pos  =new Float32Array(maxN*3);
+    this.col  =new Float32Array(maxN*3);
+    this.sizes=new Float32Array(maxN);
+    this.age  =new Float32Array(maxN);
+    this.life =new Float32Array(maxN);
+    this.prev =new Float32Array(maxN*3);
+    this.tPos =new Float32Array(maxN*6);
+    this.tCol =new Float32Array(maxN*6);
+
+    /* Points with custom shader */
+    this.pGeo=new THREE.BufferGeometry();
+    this.pGeo.setAttribute('position',new THREE.BufferAttribute(this.pos,3));
+    this.pGeo.setAttribute('color',new THREE.BufferAttribute(this.col,3));
+    this.pGeo.setAttribute('size',new THREE.BufferAttribute(this.sizes,1));
+    this.headMat=makeFieldPointsMat(type==='E'?3.5:3.0);
+    this.headPts=new THREE.Points(this.pGeo,this.headMat);
+
+    /* Trail lines */
+    this.tGeo=new THREE.BufferGeometry();
+    this.tGeo.setAttribute('position',new THREE.BufferAttribute(this.tPos,3));
+    this.tGeo.setAttribute('color',new THREE.BufferAttribute(this.tCol,3));
+    this.trailMat=new THREE.LineBasicMaterial({
+      vertexColors:true,blending:THREE.AdditiveBlending,transparent:true,opacity:0.5,depthWrite:false});
+    this.trailLines=new THREE.LineSegments(this.tGeo,this.trailMat);
+    this.resetAll();
+  }
+  get count(){return this.type==='E'?P.E_particle_count:P.B_particle_count;}
+  respawn(i){
+    const h=P.tower_height_m,sp=P.phase_spacing_m;
+    const m=Math.random();
+    let sx,sy;
+    if(m<0.4){sx=(Math.random()-0.5)*sp*6;sy=h*(0.4+Math.random()*0.65);}
+    else if(m<0.65){sx=(Math.random()-0.5)*35;sy=0.3+Math.random()*5;}
+    else{sx=(Math.random()-0.5)*80;sy=0.5+Math.random()*h*1.3;}
+    const sz=(Math.random()-0.5)*20;
+    this.pos[i*3]=sx;this.pos[i*3+1]=sy;this.pos[i*3+2]=sz;
+    this.prev[i*3]=sx;this.prev[i*3+1]=sy;this.prev[i*3+2]=sz;
+    this.age[i]=0; this.life[i]=1.2+Math.random()*3.5;
+  }
+  resetAll(){for(let i=0;i<this.maxN;i++)this.respawn(i);}
+  update(dt,phase,pp,pa){
+    const n=this.count, spd=P.flow_speed*14, psz=P.particle_size;
+    const isE=this.type==='E', h=P.tower_height_m;
+    for(let i=0;i<this.maxN;i++){
+      if(i>=n){this.sizes[i]=0;continue;}
+      this.age[i]+=dt;
+      const px=this.pos[i*3],py=this.pos[i*3+1];
+      if(this.age[i]>this.life[i]||py<0||py>h*2||Math.abs(px)>60){this.respawn(i);continue;}
+      this.prev[i*3]=px;this.prev[i*3+1]=py;this.prev[i*3+2]=this.pos[i*3+2];
+      let fx,fy,mag;
+      if(isE){const f=eAt(px,py,pp,P.voltage_kV,pa);fx=f.x;fy=f.y;mag=f.mag;}
+      else{const f=bAt(px,py,pp,P.current_A,pa);fx=f.x;fy=f.y;mag=f.mag*1e6;}
+      const fm=Math.sqrt(fx*fx+fy*fy)||1;
+      const jit=0.12;
+      this.pos[i*3]  +=(fx/fm+(Math.random()-0.5)*jit)*spd*dt;
+      this.pos[i*3+1]+=(fy/fm+(Math.random()-0.5)*jit)*spd*dt;
+      const logM=Math.log10(mag+1);
+      const t=Math.min(logM/(isE?4:3),1);
+      const fade=1-(this.age[i]/this.life[i]);
+      const ff=fade*fade;
+      let r,g,b;
+      if(isE){r=(0.3+0.7*t)*ff;g=(t*t*0.65)*ff;b=((1-t)*0.12)*ff;}
+      else{r=((1-t)*0.08+t*0.35)*ff;g=(t*0.6)*ff;b=(0.3+0.7*t)*ff;}
+      const ci=i*3;
+      this.col[ci]=r;this.col[ci+1]=g;this.col[ci+2]=b;
+      this.sizes[i]=(0.3+t*1.0)*psz*ff;
+      /* trail */
+      const ti=i*6;
+      this.tPos[ti]=this.prev[i*3];this.tPos[ti+1]=this.prev[i*3+1];this.tPos[ti+2]=this.prev[i*3+2];
+      this.tPos[ti+3]=this.pos[i*3];this.tPos[ti+4]=this.pos[i*3+1];this.tPos[ti+5]=this.pos[i*3+2];
+      this.tCol[ti]=r*0.5;this.tCol[ti+1]=g*0.5;this.tCol[ti+2]=b*0.5;
+      this.tCol[ti+3]=r*0.1;this.tCol[ti+4]=g*0.1;this.tCol[ti+5]=b*0.1;
+    }
+    this.pGeo.attributes.position.needsUpdate=true;
+    this.pGeo.attributes.color.needsUpdate=true;
+    this.pGeo.attributes.size.needsUpdate=true;
+    this.tGeo.attributes.position.needsUpdate=true;
+    this.tGeo.attributes.color.needsUpdate=true;
+    this.pGeo.setDrawRange(0,n);
+    this.tGeo.setDrawRange(0,n*2);
+  }
+  addTo(g){g.add(this.headPts);g.add(this.trailLines);}
+  removeFrom(g){g.remove(this.headPts);g.remove(this.trailLines);}
+}
+
+const eParticles=new FieldParticles(1200,'E');
+const bParticles=new FieldParticles(1200,'B');
+
+/* ================================================================
+   ★ RAIN SYSTEM ★
+   Thousands of falling droplets. Rain affects E-field (space charge),
+   corona onset, and creates visible splashes.
+   ================================================================ */
+const RAIN_MAX=4000;
+const rainPos=new Float32Array(RAIN_MAX*3);
+const rainCol=new Float32Array(RAIN_MAX*3);
+const rainVel=new Float32Array(RAIN_MAX); // fall speed
+let rainGeo,rainPts;
+
+function initRain(){
+  for(let i=0;i<RAIN_MAX;i++){
+    rainPos[i*3]  =(Math.random()-0.5)*200;
+    rainPos[i*3+1]=Math.random()*80;
+    rainPos[i*3+2]=(Math.random()-0.5)*200;
+    rainVel[i]=15+Math.random()*25;
+    rainCol[i*3]=0.5;rainCol[i*3+1]=0.7;rainCol[i*3+2]=1.0;
+  }
+  rainGeo=new THREE.BufferGeometry();
+  rainGeo.setAttribute('position',new THREE.BufferAttribute(rainPos,3));
+  rainGeo.setAttribute('color',new THREE.BufferAttribute(rainCol,3));
+  const mat=new THREE.PointsMaterial({
+    size:0.25,vertexColors:true,transparent:true,opacity:0.6,
+    blending:THREE.AdditiveBlending,depthWrite:false,sizeAttenuation:true});
+  rainPts=new THREE.Points(rainGeo,mat);
+  grpRain.add(rainPts);
+}
+initRain();
+
+function updateRain(dt){
+  grpRain.visible=P.show_rain&&P.rain_intensity>0;
+  if(!grpRain.visible)return;
+  const count=Math.floor(RAIN_MAX*Math.min(P.rain_intensity/3,1));
+  const windDrift=P.wind_speed_ms*0.3;
+  for(let i=0;i<RAIN_MAX;i++){
+    if(i>=count){rainPos[i*3+1]=-999;continue;}
+    rainPos[i*3+1]-=rainVel[i]*dt*(0.5+P.rain_intensity*0.3);
+    rainPos[i*3]+=windDrift*dt;
+    if(rainPos[i*3+1]<0){
+      rainPos[i*3]=(Math.random()-0.5)*200;
+      rainPos[i*3+1]=50+Math.random()*30;
+      rainPos[i*3+2]=(Math.random()-0.5)*200;
+    }
+    /* Near conductors, rain drops get slightly charged → glow */
+    const cy=P.tower_height_m;
+    const dy=Math.abs(rainPos[i*3+1]-cy);
+    const nearField=dy<8?1-dy/8:0;
+    const intensity=0.5+nearField*0.5*P.rain_intensity;
+    rainCol[i*3]=0.4*intensity;
+    rainCol[i*3+1]=0.6*intensity;
+    rainCol[i*3+2]=1.0*intensity;
+  }
+  rainGeo.attributes.position.needsUpdate=true;
+  rainGeo.attributes.color.needsUpdate=true;
+  rainGeo.setDrawRange(0,count);
+  /* Adjust rain point size based on intensity */
+  rainPts.material.size=0.15+P.rain_intensity*0.12;
+}
+
+/* ================================================================
+   ★ DUST / SAND SYSTEM ★
+   Particles blown horizontally by wind. Dust on insulators
+   increases surface conductivity → higher leakage E-field.
+   In strong E-field zones, dust gets charged and attracted.
+   ================================================================ */
+const DUST_MAX=3000;
+const dustPos=new Float32Array(DUST_MAX*3);
+const dustCol=new Float32Array(DUST_MAX*3);
+const dustVel=new Float32Array(DUST_MAX*3);
+let dustGeo,dustPts;
+
+function initDust(){
+  for(let i=0;i<DUST_MAX;i++){
+    dustPos[i*3]  =(Math.random()-0.5)*200;
+    dustPos[i*3+1]=Math.random()*40;
+    dustPos[i*3+2]=(Math.random()-0.5)*200;
+    dustVel[i*3]  =2+Math.random()*5;  // base horizontal speed
+    dustVel[i*3+1]=(Math.random()-0.5)*1; // vertical drift
+    dustVel[i*3+2]=(Math.random()-0.5)*2;
+  }
+  dustGeo=new THREE.BufferGeometry();
+  dustGeo.setAttribute('position',new THREE.BufferAttribute(dustPos,3));
+  dustGeo.setAttribute('color',new THREE.BufferAttribute(dustCol,3));
+  const mat=new THREE.PointsMaterial({
+    size:0.35,vertexColors:true,transparent:true,opacity:0.7,
+    depthWrite:false,sizeAttenuation:true});
+  dustPts=new THREE.Points(dustGeo,mat);
+  grpDust.add(dustPts);
+}
+initDust();
+
+function updateDust(dt,phase,pp,pa){
+  grpDust.visible=P.show_dust&&P.dust_density>0;
+  if(!grpDust.visible)return;
+  const count=Math.floor(DUST_MAX*Math.min(P.dust_density/3,1));
+  const windX=P.wind_speed_ms*1.2;
+  const h=P.tower_height_m;
+  for(let i=0;i<DUST_MAX;i++){
+    if(i>=count){dustPos[i*3+1]=-999;continue;}
+    const px=dustPos[i*3],py=dustPos[i*3+1],pz=dustPos[i*3+2];
+    /* Base wind-driven motion */
+    dustPos[i*3]  +=( windX+dustVel[i*3]*P.dust_density)*dt;
+    dustPos[i*3+1]+= dustVel[i*3+1]*dt + (Math.random()-0.5)*0.5*dt;
+    dustPos[i*3+2]+= dustVel[i*3+2]*dt*P.wind_speed_ms*0.3;
+    /* Charged dust gets attracted towards conductors in strong E-field */
+    if(Math.abs(px)<50&&py>1&&py<h*1.5){
+      const ef=eAt(px,py,pp,P.voltage_kV,pa);
+      const pull=Math.min(ef.mag*0.0001*P.dust_density,2);
+      const fm=Math.sqrt(ef.x*ef.x+ef.y*ef.y)||1;
+      dustPos[i*3]  +=ef.x/fm*pull*dt;
+      dustPos[i*3+1]+=ef.y/fm*pull*dt;
+    }
+    /* Respawn if out of bounds */
+    if(dustPos[i*3]>120||dustPos[i*3]<-120||dustPos[i*3+1]<0||dustPos[i*3+1]>60){
+      dustPos[i*3]=-100+(Math.random()-0.5)*20;
+      dustPos[i*3+1]=Math.random()*30;
+      dustPos[i*3+2]=(Math.random()-0.5)*200;
+    }
+    /* Color: sandy yellow, brighter near E-field */
+    const nearCond=Math.max(0,1-Math.abs(py-h)/15)*Math.max(0,1-Math.abs(px)/20);
+    const glow=nearCond*0.5;
+    dustCol[i*3]  =0.7+0.3*glow;
+    dustCol[i*3+1]=0.5+0.2*glow;
+    dustCol[i*3+2]=0.2+0.3*glow;
+  }
+  dustGeo.attributes.position.needsUpdate=true;
+  dustGeo.attributes.color.needsUpdate=true;
+  dustGeo.setDrawRange(0,count);
+  dustPts.material.size=0.2+P.dust_density*0.15;
+}
+
+/* ================================================================
+   ★ FOG SYSTEM ★
+   Semi-transparent billboard quads creating volumetric fog.
+   Fog increases effective permittivity → affects E-field.
+   ================================================================ */
+const FOG_MAX=200;
+let fogMeshes=[];
+
+function buildFog(){
+  clearGroup(grpFog);
+  fogMeshes=[];
+  if(P.fog_density<=0)return;
+  const mat=new THREE.MeshBasicMaterial({
+    color:0xaabbcc,transparent:true,opacity:0,depthWrite:false,
+    side:THREE.DoubleSide,blending:THREE.NormalBlending});
+  const geo=new THREE.PlaneGeometry(12,8);
+  const count=Math.floor(FOG_MAX*Math.min(P.fog_density,1));
+  for(let i=0;i<count;i++){
+    const m=mat.clone();
+    m.opacity=0.03+Math.random()*0.06*P.fog_density;
+    const mesh=new THREE.Mesh(geo,m);
+    mesh.position.set(
+      (Math.random()-0.5)*160,
+      0.5+Math.random()*15,
+      (Math.random()-0.5)*160);
+    mesh.rotation.y=Math.random()*Math.PI;
+    mesh.scale.setScalar(0.8+Math.random()*2);
+    mesh.userData.baseY=mesh.position.y;
+    mesh.userData.driftSpeed=0.2+Math.random()*0.5;
+    mesh.userData.driftPhase=Math.random()*Math.PI*2;
+    grpFog.add(mesh);
+    fogMeshes.push(mesh);
+  }
+}
+
+function updateFog(dt,t){
+  grpFog.visible=P.show_fog&&P.fog_density>0;
+  if(!grpFog.visible)return;
+  /* Gently drift fog patches */
+  for(const m of fogMeshes){
+    m.position.y=m.userData.baseY+Math.sin(t*0.001*m.userData.driftSpeed+m.userData.driftPhase)*1.5;
+    m.position.x+=P.wind_speed_ms*0.05*dt;
+    if(m.position.x>90) m.position.x=-90;
+    /* Fog always faces camera */
+    m.quaternion.copy(camera.quaternion);
+  }
+  /* Adjust scene fog to match */
+  scene.fog.density=0.002+P.fog_density*0.008;
+}
+
+/* ================================================================
+   ★ ENVIRONMENTAL LIGHTING EFFECTS ★
+   Rain → darker scene, lightning flashes
+   Dust → warm orange tint
+   Fog → reduced visibility
+   ================================================================ */
+function updateEnvironmentLighting(){
+  const rain=P.rain_intensity, dust=P.dust_density, fog=P.fog_density;
+  /* Sky / background color shift */
+  const baseR=0.031, baseG=0.031, baseB=0.094;
+  let r=baseR, g=baseG, b=baseB;
+  /* Rain darkens the sky */
+  if(rain>0){r*=1-rain*0.15;g*=1-rain*0.15;b*=1-rain*0.1;}
+  /* Dust warms the sky */
+  if(dust>0){r+=dust*0.03;g+=dust*0.015;b-=dust*0.01;}
+  /* Fog brightens */
+  if(fog>0){r+=fog*0.02;g+=fog*0.02;b+=fog*0.025;}
+  scene.background.setRGB(Math.max(r,0),Math.max(g,0),Math.max(b,0));
+  /* Sun intensity drops in rain/fog */
+  sun.intensity=Math.max(0.3, 1.3-rain*0.25-fog*0.3-dust*0.15);
+  ambLight.intensity=0.5-rain*0.1+fog*0.1;
+}
+
+/* ================================================================
+   CORONA
+   ================================================================ */
+function buildCorona(phase){
+  clearGroup(grpCorona);
+  if(!P.show_corona)return;
+  const h=P.tower_height_m,sp=P.phase_spacing_m,span=P.span_length_m;
+  const Tc=condTemp(P.temperature_C,P.current_A);
+  const sm=sagMax(span,P.conductor_w_kg,Tc);
+  const {coronaMod}=envModifiers();
+  const Ec=coronaEc(h-sm,P.conductor_r_cm,P.elevation_m,Tc,P.humidity_pct)*coronaMod;
+  const V_phase=P.voltage_kV*1000/SQRT3;
+  const r_m=P.conductor_r_cm/100;
+  const Es=V_phase/(r_m*Math.log(2*(h-sm)/r_m))/1e5;
+  const ratio=Es/Math.max(Ec,1);
+  if(ratio<0.5)return;
+  const glow=Math.min((ratio-0.5)/0.7,1.0);
+  const offsets=[-sp,0,sp],hb=[0,1.8,0];
+  const mat=new THREE.MeshBasicMaterial({color:0x44ff44,transparent:true});
+  for(let p=0;p<3;p++){
+    for(let i=0;i<=28;i++){
+      const t=i/28,z=-span/2+t*span,xn=(t-0.5)*2;
+      const y=Math.max(h-sm*(1-xn*xn)+hb[p],4);
+      const m=mat.clone();
+      m.opacity=glow*0.45*(0.3+0.7*Math.sin(phase*8+i*0.7+p*2));
+      const sz=0.25+glow*0.8;
+      const g=new THREE.Mesh(new THREE.SphereGeometry(sz,8,8),m);
+      g.position.set(offsets[p],y,z);
+      grpCorona.add(g);
+    }
+  }
+}
+
+/* ================================================================
+   HEATMAP
+   ================================================================ */
+function buildHeatmap(phase){
+  clearGroup(grpHeat);
+  if(!P.show_heatmap)return;
+  const h=P.tower_height_m,sp=P.phase_spacing_m;
+  const Tc=condTemp(P.temperature_C,P.current_A);
+  const sm=sagMax(P.span_length_m,P.conductor_w_kg,Tc);
+  const pp=phasePos(h,sp,sm);
+  const pa=[phase,phase+2*Math.PI/3,phase+4*Math.PI/3];
+  const res=64,sz=120;
+  const canvas=document.createElement('canvas');
+  canvas.width=res;canvas.height=res;
+  const ctx=canvas.getContext('2d');
+  const img=ctx.createImageData(res,res);
+  let mx=0;
+  const vals=new Float32Array(res*res);
+  for(let iy=0;iy<res;iy++){
+    for(let ix=0;ix<res;ix++){
+      const px=-sz/2+ix*sz/(res-1);
+      const pz=-sz/2+iy*sz/(res-1);
+      const v=bAt(px,1.0,pp,P.current_A,pa).mag*1e6;
+      vals[iy*res+ix]=v;
+      if(v>mx)mx=v;
+    }
+  }
+  for(let i=0;i<vals.length;i++){
+    const t=Math.min(vals[i]/(mx*0.4+0.001),1);
+    img.data[i*4]  =Math.floor(255*t);
+    img.data[i*4+1]=Math.floor(130*t*t);
+    img.data[i*4+2]=Math.floor(20*t*t*t);
+    img.data[i*4+3]=Math.floor(200*t);
+  }
+  ctx.putImageData(img,0,0);
+  const tex=new THREE.CanvasTexture(canvas);
+  tex.magFilter=THREE.LinearFilter;
+  const hm=new THREE.Mesh(new THREE.PlaneGeometry(sz,sz),
+    new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false}));
+  hm.rotation.x=-Math.PI/2;hm.position.y=0.08;
+  grpHeat.add(hm);
+}
+
+/* ================================================================
+   PROBE
+   ================================================================ */
+function updateProbe(phase){
+  const px=P.probe_x,py=P.probe_y;
+  probe.position.set(px,py,0);
+  const h=P.tower_height_m,sp=P.phase_spacing_m;
+  const Tc=condTemp(P.temperature_C,P.current_A);
+  const sm=sagMax(P.span_length_m,P.conductor_w_kg,Tc);
+  const pp=phasePos(h,sp,sm);
+  const pa=[phase,phase+2*Math.PI/3,phase+4*Math.PI/3];
+  const ef=eAt(px,py,pp,P.voltage_kV,pa);
+  const bf=bAt(px,py,pp,P.current_A,pa);
+  const {coronaMod,eFactor,bFactor}=envModifiers();
+  const Ec=coronaEc(h-sm,P.conductor_r_cm,P.elevation_m,P.temperature_C,P.humidity_pct)*coronaMod;
+  document.getElementById('rE').textContent=ef.mag.toFixed(2);
+  document.getElementById('rB').textContent=(bf.mag*1e6).toFixed(3);
+  document.getElementById('rC').textContent=Ec.toFixed(2);
+  document.getElementById('rS').textContent=sm.toFixed(2);
+  const ey=Math.max(h-sm,6);
+  document.getElementById('rD').textContent=Math.sqrt(px*px+(py-ey)*(py-ey)).toFixed(1);
+  /* Environment factors */
+  document.getElementById('rEmod').textContent='×'+eFactor.toFixed(2);
+  document.getElementById('rBmod').textContent='×'+bFactor.toFixed(2);
+  const V_phase=P.voltage_kV*1000/SQRT3;
+  const r_m=P.conductor_r_cm/100;
+  const Es=V_phase/(r_m*Math.log(2*(h-sm)/r_m))/1e5;
+  const cRatio=Es/Math.max(Ec,1);
+  document.getElementById('rCmod').textContent=cRatio.toFixed(2);
+}
+
+/* ================================================================
+   STATE
+   ================================================================ */
+let dirty=true, vizDirty=true, envDirty=true;
+
+function rebuildStruct(){buildTowers();buildConductors();dirty=false;vizDirty=true;}
+function syncViz(){
+  eParticles.removeFrom(grpEField);
+  bParticles.removeFrom(grpBField);
+  clearGroup(grpEField);clearGroup(grpBField);
+  eParticles.resetAll();bParticles.resetAll();
+  if(P.show_E) eParticles.addTo(grpEField);
+  if(P.show_B) bParticles.addTo(grpBField);
+  vizDirty=false;
+}
+function rebuildEnv(){buildFog();envDirty=false;}
+
+/* ================================================================
+   GUI
+   ================================================================ */
+const gui=new dat.GUI({width:310});
+gui.domElement.style.marginTop='50px';
+function mark(){dirty=true;}
+function markViz(){vizDirty=true;}
+function markEnv(){envDirty=true;}
+
+const fE=gui.addFolder('⚡ Electrical');
+fE.add(P,'voltage_kV',11,800,1).name('Voltage (kV)').onChange(mark);
+fE.add(P,'current_A',50,5000,10).name('Current (A)').onChange(mark);
+fE.add(P,'frequency_Hz',50,60,10).name('Frequency (Hz)');
+fE.add(P,'power_factor',0.7,1.0,0.01).name('Power Factor');
+fE.open();
+
+const fG=gui.addFolder('🗼 Geometry');
+fG.add(P,'tower_height_m',8,60,0.5).name('Tower Height (m)').onChange(mark);
+fG.add(P,'phase_spacing_m',1,15,0.5).name('Phase Spacing (m)').onChange(mark);
+fG.add(P,'span_length_m',50,600,10).name('Span Length (m)').onChange(mark);
+fG.add(P,'conductor_r_cm',0.3,3,0.1).name('Conductor r (cm)').onChange(mark);
+fG.add(P,'conductor_w_kg',0.3,4,0.1).name('Conductor wt (kg/m)').onChange(mark);
+fG.open();
+
+const fEn=gui.addFolder('🌍 Environment & Weather');
+fEn.add(P,'temperature_C',0,55,1).name('Temperature (°C)').onChange(mark);
+fEn.add(P,'humidity_pct',10,100,1).name('Humidity (%)');
+fEn.add(P,'elevation_m',0,2000,10).name('Elevation (m)');
+fEn.add(P,'wind_speed_ms',0,30,0.5).name('Wind (m/s)').onChange(mark);
+fEn.add(P,'rain_intensity',0,3,0.1).name('Rain (0-3)').onChange(markEnv);
+fEn.add(P,'dust_density',0,3,0.1).name('Dust/Sand (0-3)');
+fEn.add(P,'fog_density',0,1,0.05).name('Fog (0-1)').onChange(markEnv);
+fEn.add(P,'pollution_level',0,2,0.1).name('Pollution (0-2)');
+fEn.add(P,'soil_resistivity',1,1000,5).name('Soil Ω·m');
+fEn.open();
+
+const fV=gui.addFolder('👁 Visualisation');
+fV.add(P,'show_E').name('E-field particles').onChange(markViz);
+fV.add(P,'show_B').name('B-field particles').onChange(markViz);
+fV.add(P,'show_corona').name('Corona glow');
+fV.add(P,'show_heatmap').name('Ground heatmap');
+fV.add(P,'show_rain').name('Show rain');
+fV.add(P,'show_dust').name('Show dust');
+fV.add(P,'show_fog').name('Show fog');
+fV.add(P,'E_particle_count',50,1200,50).name('E particles');
+fV.add(P,'B_particle_count',50,1200,50).name('B particles');
+fV.add(P,'flow_speed',0.1,4,0.1).name('Flow speed');
+fV.add(P,'particle_size',0.5,4,0.1).name('Particle size');
+fV.add(P,'animate').name('Animate phase');
+fV.open();
+
+const fP=gui.addFolder('🔮 Probe');
+fP.add(P,'probe_x',-60,60,0.5).name('Probe X (m)');
+fP.add(P,'probe_y',0.5,50,0.5).name('Probe Y (m)');
+fP.open();
+
+/* Presets */
+const presets={
+  '☀️ Dry 220kV':()=>{Object.assign(P,{voltage_kV:220,current_A:500,tower_height_m:30,phase_spacing_m:7,span_length_m:350,conductor_r_cm:1.5,conductor_w_kg:1.6,rain_intensity:0,dust_density:0,fog_density:0,temperature_C:35,humidity_pct:30,wind_speed_ms:2});dirty=true;envDirty=true;gui.updateDisplay();},
+  '🌧️ Rain 220kV':()=>{Object.assign(P,{voltage_kV:220,current_A:500,tower_height_m:30,phase_spacing_m:7,span_length_m:350,conductor_r_cm:1.5,conductor_w_kg:1.6,rain_intensity:2.5,dust_density:0,fog_density:0.3,temperature_C:20,humidity_pct:90,wind_speed_ms:8});dirty=true;envDirty=true;gui.updateDisplay();},
+  '🏜️ Sandstorm':()=>{Object.assign(P,{voltage_kV:220,current_A:500,tower_height_m:30,phase_spacing_m:7,span_length_m:350,conductor_r_cm:1.5,conductor_w_kg:1.6,rain_intensity:0,dust_density:2.5,fog_density:0,temperature_C:45,humidity_pct:15,wind_speed_ms:20,pollution_level:1});dirty=true;envDirty=true;gui.updateDisplay();},
+  '🌫️ Fog 400kV':()=>{Object.assign(P,{voltage_kV:400,current_A:1200,tower_height_m:42,phase_spacing_m:12,span_length_m:450,conductor_r_cm:2.0,conductor_w_kg:2.5,rain_intensity:0,dust_density:0,fog_density:0.9,temperature_C:10,humidity_pct:95,wind_speed_ms:1});dirty=true;envDirty=true;gui.updateDisplay();},
+  '🏭 Polluted 33kV':()=>{Object.assign(P,{voltage_kV:33,current_A:350,tower_height_m:16,phase_spacing_m:3,span_length_m:200,conductor_r_cm:0.8,conductor_w_kg:0.8,rain_intensity:0.5,dust_density:1,fog_density:0.4,temperature_C:28,humidity_pct:70,wind_speed_ms:3,pollution_level:2});dirty=true;envDirty=true;gui.updateDisplay();},
+  '⚡ 400kV Clear':()=>{Object.assign(P,{voltage_kV:400,current_A:1200,tower_height_m:42,phase_spacing_m:12,span_length_m:450,conductor_r_cm:2.0,conductor_w_kg:2.5,rain_intensity:0,dust_density:0,fog_density:0,temperature_C:25,humidity_pct:40,wind_speed_ms:3,pollution_level:0});dirty=true;envDirty=true;gui.updateDisplay();},
+};
+const fPr=gui.addFolder('📋 Presets');
+for(const[k]of Object.entries(presets)) fPr.add(presets,k);
+fPr.open();
+
+/* ================================================================
+   RENDER LOOP
+   ================================================================ */
+let phase=0, lastSlow=0;
+const SLOW_MS=300;
+let prevTime=performance.now();
+
+function loop(t){
+  requestAnimationFrame(loop);
+  const dt=Math.min((t-prevTime)/1000,0.05);
+  prevTime=t;
+  ctrl.update();
+  if(dirty) rebuildStruct();
+  if(vizDirty) syncViz();
+  if(envDirty) rebuildEnv();
+  if(P.animate) phase+=2*Math.PI*P.frequency_Hz*dt;
+
+  const h=P.tower_height_m,sp=P.phase_spacing_m;
+  const Tc=condTemp(P.temperature_C,P.current_A);
+  const sm=sagMax(P.span_length_m,P.conductor_w_kg,Tc);
+  const pp=phasePos(h,sp,sm);
+  const pa=[phase,phase+2*Math.PI/3,phase+4*Math.PI/3];
+
+  /* Field particles — every frame */
+  if(P.show_E) eParticles.update(dt,phase,pp,pa);
+  if(P.show_B) bParticles.update(dt,phase,pp,pa);
+
+  /* Environment particles — every frame */
+  updateRain(dt);
+  updateDust(dt,phase,pp,pa);
+  updateFog(dt,t);
+  updateEnvironmentLighting();
+
+  /* Slow updates */
+  if(t-lastSlow>SLOW_MS){
+    buildCorona(phase);
+    buildHeatmap(phase);
+    lastSlow=t;
+  }
+
+  updateProbe(phase);
+  renderer.render(scene,camera);
+}
+
+rebuildStruct();
+syncViz();
+rebuildEnv();
+loop(performance.now());
+
+window.addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>

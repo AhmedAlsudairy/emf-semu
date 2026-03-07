@@ -1,0 +1,13 @@
+# Virtual environments
+.venv/
+.venv-cu/
+__pycache__/
+*.pyc
+
+# Large CSV datasets (regenerable)
+grid_emf_dataset.csv
+grid_emf_dataset_220kv.csv
+
+# OS files
+Thumbs.db
+.DS_Store

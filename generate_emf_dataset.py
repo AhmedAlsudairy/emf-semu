@@ -381,29 +381,172 @@ def make_distance_grid() -> np.ndarray:
 # ---------------------------------------------------------------------------
 # Environmental scenario generator
 # ---------------------------------------------------------------------------
-def environmental_scenarios(rng: np.random.Generator):
-    """Yield dicts of environmental conditions spanning realistic ranges."""
-    temps       = [15, 25, 35, 45, 50]
-    humidities  = [20, 35, 50, 65, 80]
-    elevations  = [0, 50, 150, 300, 600, 1200]
-    winds       = [0.5, 2, 5, 10, 20]
-    soils       = [30, 100, 300, 1000]
-    solars      = [0, 400, 800, 1100]
-    load_factors= [0.3, 0.5, 0.7, 0.85, 1.0, 1.15, 1.3]
+WEATHER_VAR_ORDER = ['T', 'RH', 'Ws', 'P', 'R', 'Sd', 'Ir', 'Cc']
+WEATHER_CORR = np.array([
+    [1.00, -0.72,  0.15,  0.10, -0.35,  0.20,  0.55, -0.40],
+    [-0.72, 1.00, -0.10, -0.05,  0.65, -0.30, -0.45,  0.55],
+    [0.15, -0.10,  1.00, -0.15, -0.05,  0.70,  0.05, -0.15],
+    [0.10, -0.05, -0.15,  1.00, -0.20,  0.10,  0.15, -0.20],
+    [-0.35, 0.65, -0.05, -0.20,  1.00, -0.40, -0.35,  0.60],
+    [0.20, -0.30,  0.70,  0.10, -0.40,  1.00,  0.10, -0.20],
+    [0.55, -0.45,  0.05,  0.15, -0.35,  0.10,  1.00, -0.75],
+    [-0.40, 0.55, -0.15, -0.20,  0.60, -0.20, -0.75,  1.00],
+], dtype=float)
 
-    for Ta in temps:
-        for hum in humidities:
-            for elev in elevations:
-                lf  = rng.choice(load_factors)
-                ws  = rng.choice(winds)
-                sr  = rng.choice(soils)
-                sol = rng.choice(solars)
-                ice = rng.choice([0, 0, 0, 0, 5]) if Ta < 5 else 0
-                yield dict(temperature_C=Ta, humidity_pct=hum, elevation_m=elev,
-                           load_factor=float(lf), wind_speed_ms=float(ws),
-                           soil_resistivity_ohm_m=float(sr),
-                           solar_irradiance_W_m2=float(sol),
-                           ice_thickness_mm=float(ice))
+
+def _season_from_month(month: int) -> str:
+    if month in (6, 7, 8):
+        return 'Summer'
+    if month in (12, 1, 2):
+        return 'Winter'
+    return 'Spring/Autumn'
+
+
+def _weather_label(Ta: float, hum: float, ws: float, rain_mm: float,
+                   sand_density: float, tod: str) -> str:
+    if rain_mm > 0.1:
+        return 'Rainy'
+    if sand_density > 0.5 and ws > 6:
+        return 'Dusty/Windy'
+    if tod == 'Night':
+        return 'Night'
+    if ws > 12:
+        return 'Windy'
+    if hum > 70 and Ta > 30:
+        return 'Hot/Humid'
+    if Ta < 8:
+        return 'Cold'
+    return 'Clear'
+
+
+def environmental_scenarios(rng: np.random.Generator, n_samples: int = 150):
+    """
+    Yield physically coherent environmental scenarios using multivariate
+    correlated sampling (Cholesky decomposition) plus hard/soft rule enforcement.
+    """
+    L = np.linalg.cholesky(WEATHER_CORR)
+
+    elevations = [0, 50, 150, 300, 600, 1200]
+    soils = [30, 100, 300, 1000]
+    load_factors = [0.3, 0.5, 0.7, 0.85, 1.0, 1.15, 1.3]
+    tod_options = ['Morning', 'Afternoon', 'Evening', 'Night']
+
+    months_by_season = {
+        'Summer': [6, 7, 8],
+        'Winter': [12, 1, 2],
+        'Spring/Autumn': [3, 4, 5, 9, 10, 11],
+    }
+
+    # Base climatology + spread for [T, RH, Ws, P, R, Sd, Ir, Cc]
+    stats = {
+        'Summer': {
+            'mean': np.array([43.0, 18.0, 4.5, 1007.0, 0.0, 0.25, 980.0, 0.15]),
+            'std':  np.array([4.0,  8.0, 2.0,    4.0, 0.8, 0.25, 140.0, 0.15]),
+            'max_clear_sky': 1100.0,
+        },
+        'Winter': {
+            'mean': np.array([12.0, 60.0, 3.0, 1015.0, 0.8, 0.05, 420.0, 0.45]),
+            'std':  np.array([5.0, 15.0, 1.8,    5.0, 1.5, 0.10, 120.0, 0.20]),
+            'max_clear_sky': 650.0,
+        },
+        'Spring/Autumn': {
+            'mean': np.array([28.0, 40.0, 3.5, 1011.0, 0.2, 0.12, 700.0, 0.30]),
+            'std':  np.array([7.0, 14.0, 1.9,    4.0, 1.0, 0.18, 150.0, 0.18]),
+            'max_clear_sky': 900.0,
+        },
+    }
+
+    for _ in range(n_samples):
+        season = rng.choice(['Summer', 'Winter', 'Spring/Autumn'], p=[0.35, 0.25, 0.40])
+        month = int(rng.choice(months_by_season[season]))
+        tod = str(rng.choice(tod_options, p=[0.26, 0.30, 0.24, 0.20]))
+
+        z = rng.standard_normal(len(WEATHER_VAR_ORDER))
+        x_corr = L @ z
+        x = stats[season]['mean'] + stats[season]['std'] * x_corr
+
+        Ta, hum, ws, pressure_hPa, rain_mm, sand_density, ir_sample, cloud_fraction = x.tolist()
+
+        # Basic physical bounds
+        ws = max(ws, 0.1)
+        pressure_hPa = float(np.clip(pressure_hPa, 980.0, 1035.0))
+        rain_mm = max(rain_mm, 0.0)
+        sand_density = max(sand_density, 0.0)
+        cloud_fraction = float(np.clip(cloud_fraction, 0.0, 1.0))
+
+        # HARD rule 5: seasonal climatology bounds
+        if month in (6, 7, 8):
+            Ta = float(np.clip(Ta, 35.0, 52.0))
+            hum = float(np.clip(hum, 5.0, 30.0))
+        elif month in (12, 1, 2):
+            Ta = float(np.clip(Ta, 2.0, 20.0))
+            hum = float(np.clip(hum, 30.0, 85.0))
+        else:
+            Ta = float(np.clip(Ta, 15.0, 45.0))
+            hum = float(np.clip(hum, 10.0, 80.0))
+
+        # HARD rule 1: hot arid anti-correlation
+        if Ta > 40.0:
+            hum = min(hum, 29.9)
+
+        # HARD rule 2: dust requires wind threshold
+        if sand_density > 0.5:
+            ws = max(ws, 6.1)
+
+        # HARD rule 3: rainfall implies high humidity
+        if rain_mm > 0.0:
+            hum = max(hum, 70.1)
+
+        # SOFT rule 6: nighttime cooling + humidity rise
+        if tod == 'Night':
+            Ta = Ta - float(rng.uniform(8.0, 15.0))
+            hum = hum + float(rng.uniform(15.0, 30.0))
+
+            if month in (6, 7, 8):
+                Ta = float(np.clip(Ta, 22.0, 44.0))
+                hum = float(np.clip(hum, 10.0, 55.0))
+            elif month in (12, 1, 2):
+                Ta = float(np.clip(Ta, 0.0, 18.0))
+                hum = float(np.clip(hum, 35.0, 95.0))
+            else:
+                Ta = float(np.clip(Ta, 8.0, 35.0))
+                hum = float(np.clip(hum, 20.0, 90.0))
+
+        hum = float(np.clip(hum, 1.0, 99.0))
+
+        # SOFT rule 4: cloud cover attenuates irradiance
+        max_clear_sky = stats[_season_from_month(month)]['max_clear_sky']
+        ir_model = max_clear_sky * (1.0 - 0.75 * cloud_fraction)
+        solar_irradiance = 0.7 * ir_model + 0.3 * max(ir_sample, 0.0)
+        if tod == 'Night':
+            solar_irradiance = float(rng.uniform(0.0, 40.0))
+        solar_irradiance = float(np.clip(solar_irradiance, 0.0, max_clear_sky))
+
+        lf = float(rng.choice(load_factors))
+        elev = float(rng.choice(elevations))
+        sr = float(rng.choice(soils))
+        ice = float(rng.choice([0, 0, 0, 0, 5]) if Ta < 5 else 0)
+        season = _season_from_month(month)
+        weather = _weather_label(Ta, hum, ws, rain_mm, sand_density, tod)
+
+        yield {
+            'temperature_C': float(round(Ta, 2)),
+            'humidity_pct': float(round(hum, 2)),
+            'wind_speed_ms': float(round(ws, 2)),
+            'pressure_hPa': float(round(pressure_hPa, 2)),
+            'rain_mm': float(round(rain_mm, 3)),
+            'sand_density_g_m3': float(round(sand_density, 3)),
+            'solar_irradiance_W_m2': float(round(solar_irradiance, 2)),
+            'cloud_fraction': float(round(cloud_fraction, 3)),
+            'month': int(month),
+            'time_of_day': tod,
+            'season': season,
+            'weather': weather,
+            'elevation_m': elev,
+            'load_factor': lf,
+            'soil_resistivity_ohm_m': sr,
+            'ice_thickness_mm': ice,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +624,14 @@ def generate_dataset(
                     sr   = env['soil_resistivity_ohm_m']
                     sol  = env['solar_irradiance_W_m2']
                     ice  = env['ice_thickness_mm']
+                    rain = env['rain_mm']
+                    sand_density = env['sand_density_g_m3']
+                    cloud_fraction = env['cloud_fraction']
+                    pressure_hPa = env['pressure_hPa']
+                    month = env['month']
+                    tod = env['time_of_day']
+                    season = env['season']
+                    weather = env['weather']
 
                     I     = I_base * lf
                     Tc    = conductor_temperature(I, Ta, R_km, cond_d, wind_speed=ws,
@@ -522,19 +673,6 @@ def generate_dataset(
                             pf  = rng.uniform(0.80, 0.98, size=n_dist)
                             P_MW = SQRT3 * V_kV * I * pf / 1000
 
-                            if ws > 12:
-                                weather = 'Windy'
-                            elif hum > 70 and Ta > 30:
-                                weather = 'Hot/Humid'
-                            elif Ta < 5:
-                                weather = 'Cold'
-                            elif sol < 100:
-                                weather = 'Night'
-                            else:
-                                weather = 'Clear'
-
-                            tod = rng.choice(['Morning','Afternoon','Evening','Night'])
-                            season = 'Summer' if Ta > 30 else ('Winter' if Ta < 15 else 'Spring/Autumn')
                             substation = rng.choice(SUBSTATIONS) if V_kV >= 132 else 'N/A'
 
                             chunk = pd.DataFrame({
@@ -557,14 +695,19 @@ def generate_dataset(
                                 'temperature_C':           np.full(n_dist, Ta),
                                 'conductor_temp_C':        np.full(n_dist, round(Tc, 1)),
                                 'humidity_pct':            np.full(n_dist, hum),
+                                'pressure_hPa':            np.full(n_dist, pressure_hPa),
                                 'elevation_m':             np.full(n_dist, elev),
                                 'wind_speed_ms':           np.full(n_dist, ws),
+                                'rain_mm':                 np.full(n_dist, rain),
+                                'sand_density_g_m3':       np.full(n_dist, sand_density),
+                                'cloud_fraction':          np.full(n_dist, cloud_fraction),
                                 'soil_resistivity_ohm_m':  np.full(n_dist, sr),
                                 'solar_irradiance_W_m2':   np.full(n_dist, sol),
                                 'ice_thickness_mm':        np.full(n_dist, ice),
                                 'weather':                 np.full(n_dist, weather),
                                 'time_of_day':             np.full(n_dist, tod),
                                 'season':                  np.full(n_dist, season),
+                                'month':                   np.full(n_dist, month),
                                 'load_factor':             np.full(n_dist, round(lf, 3)),
                                 'power_factor':            pf,
                                 'active_power_MW':         P_MW,
@@ -665,6 +808,48 @@ def load_config(path: str) -> Dict[int, dict]:
     return {int(k): v for k, v in raw.items() if not k.startswith('_')}
 
 
+def run_context_engine_mode(args) -> None:
+    """Run the multi-layer context engine artifacts from this CLI."""
+    from emf_context_engine import (
+        ScenarioPlanner,
+        MultiLayerEMFContextEngine,
+        save_generation_artifacts,
+    )
+
+    config = ScenarioPlanner.plan(
+        voltage_class_kv=args.context_voltage,
+        scenario_key=args.context_scenario,
+        season=args.context_season,
+        region=args.context_region,
+        n_records=args.context_records,
+    )
+
+    calibration_targets = None
+    if args.context_targets:
+        with open(args.context_targets, 'r', encoding='utf-8') as f:
+            calibration_targets = json.load(f)
+
+    engine = MultiLayerEMFContextEngine(config, noise_seed=args.context_seed)
+    df, report = engine.generate(calibration_targets=calibration_targets)
+    save_generation_artifacts(
+        df,
+        report,
+        output_csv=args.context_out_csv,
+        output_json=args.context_out_report,
+        output_md=args.context_out_md,
+    )
+
+    print("\n" + "=" * 74)
+    print("  Context Engine Generation Completed")
+    print(f"  Records: {len(df):,}")
+    print(f"  Dataset: {args.context_out_csv}")
+    print(f"  Report : {args.context_out_report}")
+    print(f"  ReportMD: {args.context_out_md}")
+    print(f"  ToT branch: {report['tot_branch']}")
+    print(f"  Calibration score: {report['calibration_report']['calibration_score']:.3f}")
+    print("=" * 74)
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -685,10 +870,41 @@ def main():
     parser.add_argument('--dump-config', action='store_true',
                         help='Print sample JSON config and exit')
 
+    # Context-engine mode (Layer 0-6 ToT/CoT workflow)
+    parser.add_argument('--context-engine', action='store_true',
+                        help='Run multi-layer context engine mode instead of legacy generator')
+    parser.add_argument('--context-voltage', type=float, default=220.0,
+                        help='Context mode voltage class in kV (default: 220)')
+    parser.add_argument('--context-scenario', type=str, default='H',
+                        help='Context mode scenario key A-H (default: H)')
+    parser.add_argument('--context-season', type=str, default='summer',
+                        help='Context mode season (default: summer)')
+    parser.add_argument('--context-region', type=str, default='Iraq_Tikrit',
+                        help='Context mode region label')
+    parser.add_argument('--context-records', type=int, default=5000,
+                        help='Context mode number of records (min 500)')
+    parser.add_argument('--context-seed', type=int, default=42,
+                        help='Context mode noise seed')
+    parser.add_argument('--context-targets', type=str, default='',
+                        help='Optional JSON path with calibration summary targets')
+    parser.add_argument('--context-out-csv', type=str,
+                        default='outputs/context_engine_dataset.csv',
+                        help='Context mode output dataset CSV path')
+    parser.add_argument('--context-out-report', type=str,
+                        default='outputs/context_engine_report.json',
+                        help='Context mode output report JSON path')
+    parser.add_argument('--context-out-md', type=str,
+                        default='outputs/context_engine_report.md',
+                        help='Context mode output report markdown path')
+
     args = parser.parse_args()
 
     if args.dump_config:
         print(SAMPLE_CONFIG)
+        return
+
+    if args.context_engine:
+        run_context_engine_mode(args)
         return
 
     cfg = load_config(args.config) if args.config else None

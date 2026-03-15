@@ -11,3 +11,4 @@ grid_emf_dataset_220kv.csv
 # OS files
 Thumbs.db
 .DS_Store
+outputs/v2_mixed_11_and_33kv_12million.csv
